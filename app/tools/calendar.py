@@ -32,6 +32,10 @@ CALENDARS_TTL = 300
 _SKIP = ("#holiday@", "#contacts@", "#weeknum@", "addressbook#")
 _calendars_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _calendars_lock = threading.Lock()
+# Почему список календарей не удалось получить (по аккаунту). Нужно, чтобы
+# сказать человеку правду «вижу только основной», а не молча показывать
+# половину встреч: со стороны это выглядит как «бот не видит рабочий календарь».
+_calendars_problem: dict[str, str] = {}
 
 
 def readable_calendars() -> list[dict[str, Any]]:
@@ -75,12 +79,34 @@ def readable_calendars() -> list[dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001 — нет права на список (старый токен): только основной
         logger.info("Список календарей недоступен, читаю только основной: %s", exc)
         found = []
+        with _calendars_lock:
+            _calendars_problem[key] = str(exc)[:300]
+    else:
+        with _calendars_lock:
+            _calendars_problem.pop(key, None)
     if not any(c["primary"] for c in found):
         found.insert(0, {"id": default, "name": "основной", "primary": True})
     found.sort(key=lambda c: not c["primary"])
     with _calendars_lock:
         _calendars_cache[key] = (now, found)
     return found
+
+
+def calendars_problem() -> str:
+    """Почему виден только основной календарь. Пусто — список получен целиком.
+
+    Старый токен выдан без права на список календарей: встречи из рабочего
+    календаря в него не попадают, и человеку об этом нужно сказать прямо —
+    сам он этого не заметит, ответы выглядят правдоподобно.
+    """
+    if google_client.mode() == "shared":
+        return ""
+    key = accounts.resolve()
+    with _calendars_lock:
+        problem = _calendars_problem.get(key, "")
+    if not problem and not _calendars_cache.get(key):
+        return ""  # ещё не спрашивали — узнаем при первом чтении
+    return problem
 
 
 def _events_from(calendars: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -233,14 +259,33 @@ def _calendar_list_events(tool_input: dict[str, Any]) -> Any:
         raise ToolError(describe_http_error(exc, "Чтение календаря")) from exc
 
     names = [c.get("name") or c["id"] for c in calendars]
+    # Токен без права на список календарей видит только основной. Молчать об
+    # этом нельзя: человек спросит про встречу в рабочем календаре, получит
+    # «встреч нет» и решит, что бот врёт или сломан.
+    narrowed = "" if explicit else calendars_problem()
+    partial = (
+        "ВНИМАНИЕ: доступен только основной календарь — список календарей аккаунта "
+        "получить не удалось (скорее всего вход выполнен старым токеном без нужных прав). "
+        "Встречи из рабочих и общих календарей в ответ НЕ попали. Обязательно скажи об этом "
+        "пользователю и предложи отправить /auth, чтобы войти заново с новыми правами."
+        if narrowed
+        else ""
+    )
     if not events:
-        return {
+        result: dict[str, Any] = {
             "status": "empty",
             "calendars": names,
             "period": {"from": start, "to": end},
             "hint": "В указанный период встреч нет ни в одном из этих календарей. Не придумывай события.",
         }
-    return {
+        if partial:
+            result["warning"] = partial
+            result["hint"] = (
+                "В этих календарях встреч нет — но учти предупреждение: часть календарей "
+                "недоступна, поэтому «встреч нет» может быть неполной картиной."
+            )
+        return result
+    result = {
         "status": "ok",
         "calendars": names,
         "period": {"from": start, "to": end},
@@ -248,6 +293,9 @@ def _calendar_list_events(tool_input: dict[str, Any]) -> Any:
         "events": events,
         "hint": "Чтобы изменить или удалить событие, передай его calendar_id из этого списка.",
     }
+    if partial:
+        result["warning"] = partial
+    return result
 
 
 def _build_event_body(tool_input: dict[str, Any]) -> dict[str, Any]:

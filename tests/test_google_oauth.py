@@ -111,6 +111,36 @@ class TestCodeExtraction:
         with pytest.raises(google_oauth.OAuthError, match="отказ"):
             google_oauth.extract_code("http://localhost:8765/?error=access_denied")
 
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            # «Доступ заблокирован» при нажатом «Разрешить» — это Testing/Test users,
+            # а не отмена: совет «нажмите Разрешить» тут бесполезен.
+            ("http://localhost:8765/?error=access_denied", "Test users"),
+            ("http://localhost:8765/?error=admin_policy_enforced", "администратор"),
+            ("http://localhost:8765/?error=org_internal", "Internal"),
+            ("http://localhost:8765/?error=disallowed_useragent", "браузер"),
+        ],
+    )
+    def test_denial_reason_is_named(self, url: str, expected: str) -> None:
+        with pytest.raises(google_oauth.OAuthError, match=expected):
+            google_oauth.extract_code(url)
+
+    def test_unknown_denial_still_explains(self) -> None:
+        """Незнакомый код Google не должен превращаться в молчание."""
+        with pytest.raises(google_oauth.OAuthError, match="something_new"):
+            google_oauth.extract_code("http://localhost:8765/?error=something_new")
+
+    def test_denial_url_is_recognised_as_an_answer(self) -> None:
+        """Адрес со страницы ошибки — ответ на /auth, а не посторонний текст.
+
+        Иначе бот отвечал «это не похоже на код» и не говорил, что случилось.
+        """
+        assert google_oauth.looks_like_code("http://localhost:8765/?error=access_denied") is True
+        assert google_oauth.looks_like_code(
+            "http://localhost:8765/?error=admin_policy_enforced&state=abc"
+        ) is True
+
     def test_url_without_code_is_rejected(self) -> None:
         with pytest.raises(google_oauth.OAuthError, match="code"):
             google_oauth.extract_code("http://localhost:8765/?state=abc&code=")

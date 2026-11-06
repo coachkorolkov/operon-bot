@@ -63,8 +63,10 @@ class FakeCalendar:
 @pytest.fixture(autouse=True)
 def _fresh():
     cal._calendars_cache.clear()
+    cal._calendars_problem.clear()
     yield
     cal._calendars_cache.clear()
+    cal._calendars_problem.clear()
 
 
 def oauth(monkeypatch, fake):
@@ -110,6 +112,39 @@ def test_old_token_without_list_right_reads_primary(monkeypatch) -> None:
                         list_error=RuntimeError("insufficientPermissions"))
     oauth(monkeypatch, fake)
     assert cal.readable_calendars() == [{"id": "primary", "name": "основной", "primary": True}]
+
+
+def test_old_token_is_reported_not_silent(monkeypatch) -> None:
+    """«Вижу только основной» — сказать вслух, а не показывать половину встреч.
+
+    Со стороны это неотличимо от «в рабочем календаре ничего нет»: человек
+    получает правдоподобный, но неполный ответ и не знает, что делать.
+    """
+    fake = FakeCalendar([], {"primary": [_event("p1", "Личное", "2026-10-30T12:00:00+03:00")]},
+                        list_error=RuntimeError("insufficientPermissions"))
+    oauth(monkeypatch, fake)
+    cal.readable_calendars()
+    assert cal.calendars_problem(), "причина должна быть известна"
+
+    content, is_error = registry.execute(
+        "calendar_list_events", {"time_min": "2026-10-30", "time_max": "2026-10-30"}
+    )
+    assert not is_error, content
+    data = json.loads(content) if isinstance(content, str) else content
+    assert "warning" in data, "бот обязан предупредить о неполной картине"
+    assert "/auth" in data["warning"]
+
+
+def test_full_list_has_no_warning(monkeypatch) -> None:
+    """Когда список получен целиком, пугать нечем."""
+    fake = FakeCalendar(CALS, {"anna@gmail.com": [_event("p1", "Личное", "2026-10-30T12:00:00+03:00")]})
+    oauth(monkeypatch, fake)
+    assert cal.calendars_problem() == ""
+    content, _ = registry.execute(
+        "calendar_list_events", {"time_min": "2026-10-30", "time_max": "2026-10-30"}
+    )
+    data = json.loads(content) if isinstance(content, str) else content
+    assert "warning" not in data
 
 
 def test_explicit_calendar_reads_only_it(monkeypatch) -> None:

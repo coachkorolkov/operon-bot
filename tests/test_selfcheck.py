@@ -389,3 +389,30 @@ class TestWebhookCheck:
 
     def test_no_webhook_is_ok(self, monkeypatch) -> None:
         assert self._run(monkeypatch, {"url": ""})["Telegram: webhook"].status == OK
+
+
+class TestInvitesCheck:
+    """«Участникам не пришли письма» — сказать заранее, а не после создания встречи.
+
+    Сервисный аккаунт без делегирования приглашения рассылать не может, и
+    узнать об этом постфактум означает потерять встречу, о которой человек
+    думал, что договорился.
+    """
+
+    def test_shared_mode_warns_before_the_meeting(self, monkeypatch) -> None:
+        from app.integrations import google_client
+
+        monkeypatch.setattr(google_client, "can_invite", lambda: False)
+        check = selfcheck._invites_check()
+        assert check.status == WARN
+        assert "НЕ отправляются" in check.detail
+        hints = " ".join(check.hints)
+        assert "/auth" in hints, "человеку нужен способ это исправить"
+
+    def test_oauth_mode_is_quiet(self, monkeypatch) -> None:
+        from app.integrations import google_client
+
+        monkeypatch.setattr(google_client, "can_invite", lambda: True)
+        check = selfcheck._invites_check()
+        assert check.status == OK
+        assert not check.hints, "когда всё работает, советов быть не должно"

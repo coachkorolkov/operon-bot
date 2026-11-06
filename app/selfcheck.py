@@ -411,9 +411,34 @@ def check_google() -> list[Check]:
     checks.append(
         Check("Google: доступ выдан", OK, status.get("account_hint") or "учётная запись определена")
     )
+    checks.append(_invites_check())
 
     checks.extend(_google_live_checks())
     return checks
+
+
+def _invites_check() -> Check:
+    """Уйдут ли участникам приглашения — заранее, а не после создания встречи.
+
+    Сервисный аккаунт без делегирования приглашения рассылать не может: для
+    Google он не тот, кто организует встречу. Человек узнавал об этом уже
+    постфактум («письма не пришли»), поэтому говорим заранее и в /check.
+    """
+    from .integrations import google_client
+
+    if google_client.can_invite():
+        return Check("Google: приглашения участникам", OK, "уходят от вашего имени")
+    return Check(
+        "Google: приглашения участникам",
+        WARN,
+        "НЕ отправляются (календарь подключён через общий доступ)",
+        [
+            "Google не даёт сервисному аккаунту рассылать приглашения: он не организатор "
+            "встречи. Участники записываются в описание события.",
+            "Чтобы письма уходили: подключите Google через /auth (вход своим аккаунтом) "
+            "или настройте делегирование в Google Workspace.",
+        ],
+    )
 
 
 SCOPE_PURPOSE = {
@@ -444,6 +469,7 @@ def _check_google_service_account() -> list[Check]:
             ["Календарь → Настройки и общий доступ → право «Вносить изменения в мероприятия»."],
         ))
     google_client.reset_cache()
+    checks.append(_invites_check())
     checks.extend(_google_live_checks())
     return checks
 

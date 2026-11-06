@@ -303,12 +303,60 @@ def handle_callback(code: str, state: str) -> dict[str, Any]:
     return result
 
 
+DENIED_HINTS = {
+    # Человек нажал «Отмена» — вредить нечем, просто повторить.
+    "access_denied": (
+        "Google вернул отказ в доступе.\n\n"
+        "Если вы нажали «Отмена» — повторите /auth и нажмите «Разрешить».\n"
+        "Если нажимали «Разрешить», а Google всё равно написал «Доступ заблокирован» — "
+        "это настройка Google Cloud, а не ваша ошибка: приложение ещё не прошло проверку "
+        "Google, и пускает только адреса из списка Test users.\n"
+        "Откройте Google Cloud → Google Auth Platform → Audience (экран согласия): "
+        "добавьте свою почту в Test users либо нажмите Publish app."
+    ),
+    # Администратор организации запретил приложению доступ к аккаунтам домена.
+    "admin_policy_enforced": (
+        "Доступ заблокирован правилом организации Google Workspace (admin_policy_enforced): "
+        "администратор домена запретил сторонние приложения. Обратитесь к администратору "
+        "или подключите личный аккаунт."
+    ),
+    # Экран согласия Internal пускает только аккаунты своей организации.
+    "org_internal": (
+        "Экран согласия настроен как Internal, а вы вошли аккаунтом другой организации "
+        "(org_internal). Либо войдите аккаунтом этой организации, либо смените тип экрана "
+        "согласия на External."
+    ),
+    # Google не пускает встроенные браузеры Telegram и прочих приложений.
+    "disallowed_useragent": (
+        "Google не пускает вход из встроенного браузера (disallowed_useragent). "
+        "Откройте ссылку в обычном браузере: скопируйте её и вставьте в Chrome или Safari."
+    ),
+}
+
+
+def _describe_denied(code: str) -> str:
+    """Почему Google не выдал код — по коду ошибки из адреса возврата."""
+    hint = DENIED_HINTS.get((code or "").strip().lower())
+    if hint:
+        return hint
+    return (
+        f"Google вернул отказ в доступе ({code}). Повторите /auth и нажмите «Разрешить»; "
+        "если повторится — посмотрите /check."
+    )
+
+
 def looks_like_code(text: str) -> bool:
     """Отличает вставленный код (или адрес возврата) от обычного вопроса."""
     raw = (text or "").strip()
     if not raw or len(raw.split()) > 1:
         return False
     if "code=" in raw:
+        return True
+    # Адрес возврата с отказом тоже ответ на наш запрос: Google не выдал код,
+    # но объяснил причину (error=access_denied). Без этой ветки человек,
+    # скопировавший адрес со страницы ошибки, получал «это не похоже на код» —
+    # то есть совет искать код там, где Google его заведомо не выдал.
+    if "error=" in raw:
         return True
     return bool(CODE_RE.match(raw))
 
@@ -330,7 +378,14 @@ def extract_code(text: str) -> str:
         return values[0]
 
     if "error=" in raw:
-        raise OAuthError("Google вернул отказ в доступе. Повторите /auth и нажмите «Разрешить».")
+        # Причина отказа уже в адресе: Google различает «нажал Отмена»
+        # (access_denied) и «аккаунт не пустили на экран согласия»
+        # (admin_policy_enforced, org_internal, disallowed_useragent).
+        # Общий совет «нажмите Разрешить» в последнем случае бесполезен:
+        # человек нажимал, а его не пустили до экрана.
+        query = urlparse(raw).query or raw.split("?", 1)[-1]
+        code = (parse_qs(query).get("error") or ["access_denied"])[0]
+        raise OAuthError(_describe_denied(code))
 
     # Скопированный из адресной строки код может остаться percent-encoded.
     code = unquote(raw)
