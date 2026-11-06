@@ -195,9 +195,19 @@ class TestOAuthCallback:
         assert "Кода нет" in response.text
 
     def test_google_error_is_shown(self, client: TestClient) -> None:
+        """Сырой код Google ничего не говорит человеку: нужна причина и действие."""
         response = client.get("/oauth2/callback?error=access_denied&state=x")
         assert response.status_code == 400
-        assert "access_denied" in response.text
+        assert "Доступ не выдан" in response.text
+        assert "Test users" in response.text, "причина «доступ заблокирован» должна быть названа"
+        assert "/auth" in response.text
+
+    def test_domain_policy_error_is_named(self, client: TestClient) -> None:
+        """Код Google сам по себе — не объяснение: нужна причина и что делать."""
+        response = client.get("/oauth2/callback?error=admin_policy_enforced&state=x")
+        assert response.status_code == 400
+        assert "администратор" in response.text
+        assert "Google вернул:" not in response.text, "голый код Google ничего не объясняет"
 
     def test_unknown_state_is_refused(self, client: TestClient) -> None:
         """Без этой проверки любой запрос к публичному адресу что-то подключал бы."""

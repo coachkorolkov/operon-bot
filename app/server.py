@@ -132,9 +132,11 @@ def oauth_callback(code: str = "", state: str = "", error: str = "") -> HTMLResp
     """Принимает ответ Google и сохраняет токен — без копирования кода вручную."""
     if error:
         google_oauth.forget(state)
+        # Причину разбирает тот же словарь, что и в боте: человек видит на
+        # странице не «access_denied», а что именно случилось и что делать.
         return _oauth_page(
             "Доступ не выдан",
-            f"Google вернул: {error}. Вернитесь в бот и повторите /auth.",
+            google_oauth.describe_denied(error) + "\n\nВернитесь в бот и повторите /auth.",
             ok=False,
         )
     if not code:

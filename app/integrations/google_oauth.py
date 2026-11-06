@@ -334,7 +334,7 @@ DENIED_HINTS = {
 }
 
 
-def _describe_denied(code: str) -> str:
+def describe_denied(code: str) -> str:
     """Почему Google не выдал код — по коду ошибки из адреса возврата."""
     hint = DENIED_HINTS.get((code or "").strip().lower())
     if hint:
@@ -385,7 +385,7 @@ def extract_code(text: str) -> str:
         # человек нажимал, а его не пустили до экрана.
         query = urlparse(raw).query or raw.split("?", 1)[-1]
         code = (parse_qs(query).get("error") or ["access_denied"])[0]
-        raise OAuthError(_describe_denied(code))
+        raise OAuthError(describe_denied(code))
 
     # Скопированный из адресной строки код может остаться percent-encoded.
     code = unquote(raw)
