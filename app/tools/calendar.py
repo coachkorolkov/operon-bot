@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from ..config import settings
-from ..integrations import accounts, google_client, google_sa
+from ..integrations import accounts, google_client, google_sa, mail
 from ..integrations.google_client import HttpError, describe_http_error, get_service
 from .base import Preview, ToolError, ToolSpec, registry
 
@@ -360,13 +360,63 @@ def _calendar_create_event(tool_input: dict[str, Any]) -> Any:
         )
     except HttpError as exc:
         raise ToolError(describe_http_error(exc, "Создание события")) from exc
-    result: dict[str, Any] = {"status": "created", **_event_view(created, calendar_id)}
-    if tool_input.get("attendees") and not google_client.can_invite():
+    result: dict[str, Any] = {**_event_view(created, calendar_id), "status": "created"}
+    attendees = [email for email in (tool_input.get("attendees") or []) if email]
+    if attendees and not google_client.can_invite():
+        # Google приглашать не даёт, поэтому письмо отправляем сами — от имени
+        # владельца календаря, с файлом .ics. Участник получает ту же встречу.
+        delivery = _mail_invites(tool_input, body, attendees)
+        if delivery.ok:
+            result["invites"] = {
+                "status": "sent",
+                "to": delivery.sent,
+                "note": delivery.summary(),
+            }
+        elif delivery.sent:
+            result["invites"] = {
+                "status": "partial",
+                "to": delivery.sent,
+                "failed": delivery.failed,
+                "note": delivery.summary(),
+            }
+        else:
+            result["invites"] = {
+                "status": "failed",
+                "failed": delivery.failed,
+                "note": delivery.summary(),
+            }
+        # Событие уже создано — приглашение лишь дополняет его. Говорим прямо,
+        # что ушло, а что нет, чтобы человек не думал, будто участники
+        # получили письмо, когда оно не ушло.
         result["note"] = (
-            "Приглашения участникам НЕ отправлены (календарь подключён через общий доступ): "
-            "участники записаны в описание встречи. Скажи об этом пользователю одной строкой."
+            delivery.summary()
+            + " Участники также записаны в описание встречи. Скажи об этом пользователю одной строкой."
         )
     return result
+
+
+def _mail_invites(
+    tool_input: dict[str, Any], body: dict[str, Any], attendees: list[str]
+) -> mail.Delivery:
+    """Письмо участникам, когда Google приглашать не даёт.
+
+    Берём те же поля, что ушли в событие: так письмо и календарь не разойдутся.
+    """
+    start = body.get("start") or {}
+    end = body.get("end") or {}
+    all_day = bool(start.get("date"))
+    start_text = start.get("date") or start.get("dateTime") or ""
+    end_text = end.get("date") or end.get("dateTime") or start_text
+    return mail.send_invites(
+        attendees=attendees,
+        title=body.get("summary") or "Встреча",
+        start=start_text,
+        end=end_text,
+        description=body.get("description") or "",
+        location=body.get("location") or "",
+        organizer_email=google_client.calendar_owner(),
+        all_day=all_day,
+    )
 
 
 def _calendar_update_event(tool_input: dict[str, Any]) -> Any:

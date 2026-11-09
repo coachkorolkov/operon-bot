@@ -152,6 +152,25 @@ def can_invite() -> bool:
     return mode() != "shared"
 
 
+def calendar_owner() -> str:
+    """Почта владельца календаря — от чьего имени подписывать письмо участникам.
+
+    Приглашение должно прийти от человека, которого участники знают, а не от
+    адреса бота. Пусто — если почта владельца неизвестна.
+    """
+    if mode() == "shared":
+        link = google_sa.current_link() or {}
+        return str(link.get("email") or "")
+    if mode() == "oauth":
+        try:
+            payload = token_store.load_token()
+            info = json.loads(payload) if payload else {}
+            return str(info.get("email") or info.get("account") or "")
+        except Exception:
+            return ""
+    return ""
+
+
 def refresh_error_message(exc: Exception) -> str:
     """Почему не обновился токен — и что делать. Сеть и отозванный доступ лечатся по-разному."""
     text = str(exc)

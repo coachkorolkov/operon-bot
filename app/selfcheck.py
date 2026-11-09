@@ -933,6 +933,7 @@ def run_groups() -> list[tuple[str, list[Check]]]:
         ("Баланс шлюза", check_billing),
         ("Telegram", check_telegram),
         ("Google", check_google),
+        ("Почта", check_mail),
         ("Интернет", check_search),
         ("База знаний", check_knowledge_base),
         ("Квант (Qdrant)", check_quant),
@@ -969,6 +970,50 @@ def render_telegram(results: list[tuple[str, list[Check]]]) -> str:
     lines.append("")
     lines.append("Сбоев нет." if not failures else f"Сбоев: {len(failures)} — см. строки с ❌.")
     return "\n".join(lines)
+
+
+def check_mail() -> list[Check]:
+    """Почта для приглашений на встречи.
+
+    Google не даёт сервисному аккаунту приглашать участников, поэтому письмо
+    отправляет сам бот. Без настроек почты встреча создаётся, но участники
+    ничего не получают — об этом нужно знать заранее, а не после встречи.
+    """
+    from .integrations import google_client, mail
+
+    if not google_client.can_invite():
+        reason = mail.problem()
+        if reason:
+            return [
+                Check(
+                    "Почта: приглашения",
+                    SKIP,
+                    "не настроена — участники не получат письмо",
+                    [
+                        reason,
+                        "Событие в календаре создаётся и без этого; участники "
+                        "попадают в описание встречи.",
+                    ],
+                )
+            ]
+        return [
+            Check(
+                "Почта: приглашения",
+                OK,
+                f"письма уходят от {mail.sender()}",
+                [
+                    "Google не разрешает сервисному аккаунту приглашать "
+                    "участников, поэтому приглашение отправляется почтой: "
+                    "письмо с файлом .ics добавляет встречу одним нажатием.",
+                ],
+            )
+        ]
+
+    # Вход через Google умеет рассылать приглашения сам — своя почта не нужна.
+    problem = mail.problem()
+    if problem:
+        return [Check("Почта: приглашения", OK, "приглашения рассылает Google")]
+    return [Check("Почта: приглашения", OK, f"Google и запасной канал {mail.sender()}")]
 
 
 def main() -> int:

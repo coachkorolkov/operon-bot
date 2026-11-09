@@ -177,6 +177,21 @@ class Settings:
     org_name: str = _str("OPERON_ORG_NAME", "OPERON")
     timezone_name: str = _str("OPERON_TIMEZONE", "Europe/Moscow")
 
+    # --- Почта (приглашения на встречи) --------------------------------------
+    # Сервисный аккаунт Google без делегирования приглашать участников не
+    # может (403 forbiddenForServiceAccounts), и всё событие с участником
+    # Google отклоняет целиком. Поэтому приглашение отправляем сами, обычной
+    # почтой от имени владельца календаря: письмо с файлом .ics даёт тот же
+    # эффект — встреча добавляется в календарь одним нажатием.
+    smtp_host: str = _str("OPERON_SMTP_HOST")
+    smtp_port: int = _int("OPERON_SMTP_PORT", 587)
+    smtp_user: str = _str("OPERON_SMTP_USER")
+    smtp_password: str = _str("OPERON_SMTP_PASSWORD")
+    smtp_from: str = _str("OPERON_SMTP_FROM")
+    # Копия владельцу: он видит, что именно ушло участникам, и может
+    # переслать письмо, если адрес окажется неверным.
+    smtp_copy_owner: bool = _bool("OPERON_SMTP_COPY_OWNER", True)
+
     # --- Данные ---
     kb_dir: Path = Path(os.getenv("OPERON_KB_DIR", str(BASE_DIR / "knowledge_base")))
     data_dir: Path = Path(os.getenv("OPERON_DATA_DIR", str(BASE_DIR / "data")))
